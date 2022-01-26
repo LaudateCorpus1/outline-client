@@ -1,4 +1,4 @@
-#!/bin/bash -eux
+#!/bin/bash
 #
 # Copyright 2018 The Outline Authors
 #
@@ -14,4 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-webpack --config=src/www/cordova.webpack.js ${BUILD_ENV:+--mode=${BUILD_ENV}}
+set -eu
+
+run_action src/www/build browser --buildMode=debug
+cordova prepare browser
+
+webpack serve \
+    --mode=development \
+    --static=platforms/browser/www \
+    --config=src/www/webpack_cordova.js \
+    --open /index_cordova.html
