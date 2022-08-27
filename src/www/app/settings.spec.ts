@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {InMemoryStorage} from '../infrastructure/memory_storage';
+import {InMemoryStorage} from '../../infrastructure/memory_storage';
 
 import {Settings, SettingsKey} from './settings';
 
@@ -81,7 +81,7 @@ describe('Settings', () => {
   it('throws when storage is corrupted', () => {
     const storage = new InMemoryStorage(new Map([[Settings.STORAGE_KEY, '"malformed": "json"']]));
     expect(() => {
-      const settings = new Settings(storage, FAKE_SETTINGS_KEYS);
+      new Settings(storage, FAKE_SETTINGS_KEYS);
     }).toThrowError(SyntaxError);
   });
 });

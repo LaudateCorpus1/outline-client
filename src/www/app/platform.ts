@@ -19,6 +19,7 @@ import {NativeNetworking} from './net';
 import {TunnelFactory} from './tunnel';
 import {Updater} from './updater';
 import {UrlInterceptor} from './url_interceptor';
+import {VpnInstaller} from './vpn_installer';
 
 // Provides platform-specific dependencies.
 // TODO: Remove one of hasDeviceSupport and getServerFactory; they're almost the same
@@ -33,13 +34,15 @@ export interface OutlinePlatform {
 
   getTunnelFactory(): TunnelFactory;
 
-  getUrlInterceptor(): UrlInterceptor|undefined;
+  getUrlInterceptor(): UrlInterceptor | undefined;
 
   getClipboard(): Clipboard;
 
   getErrorReporter(environment: EnvironmentVariables): OutlineErrorReporter;
 
   getUpdater(): Updater;
+
+  getVpnServiceInstaller(): VpnInstaller;
 
   quitApplication(): void;
 }

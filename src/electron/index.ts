@@ -14,9 +14,8 @@
 
 // Directly import @sentry/electron main process code.
 // See: https://docs.sentry.io/platforms/javascript/guides/electron/#webpack-configuration
-import * as sentry from '@sentry/electron/dist/main';
+import * as sentry from '@sentry/electron/main';
 import {app, BrowserWindow, ipcMain, Menu, MenuItemConstructorOptions, nativeImage, shell, Tray} from 'electron';
-import * as promiseIpc from 'electron-promise-ipc';
 import {autoUpdater} from 'electron-updater';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,10 +29,24 @@ import * as errors from '../www/model/errors';
 import {ShadowsocksConfig} from '../www/app/config';
 import {TunnelStatus} from '../www/app/tunnel';
 import {GoVpnTunnel} from './go_vpn_tunnel';
-import {RoutingDaemon} from './routing_service';
+import {installRoutingServices, RoutingDaemon} from './routing_service';
 import {ShadowsocksLibevBadvpnTunnel} from './sslibev_badvpn_tunnel';
 import {TunnelStore, SerializableTunnel} from './tunnel_store';
 import {VpnTunnel} from './vpn_tunnel';
+
+// TODO: can we define these macros in other .d.ts files with default values?
+// Build-time macros injected by webpack's DefinePlugin:
+//   - NETWORK_STACK is either 'go' or 'libevbadvpn' by default
+//   - SENTRY_DSN is either undefined or a url string
+//   - APP_VERSION should always be a string
+declare const NETWORK_STACK: string;
+declare const SENTRY_DSN: string | undefined;
+declare const APP_VERSION: string;
+
+// Run-time environment variables:
+const debugMode = process.env.OUTLINE_DEBUG === 'true';
+
+const isLinux = os.platform() === 'linux';
 
 // Used for the auto-connect feature. There will be a tunnel in store
 // if the user was connected at shutdown.
@@ -41,7 +54,7 @@ const tunnelStore = new TunnelStore(app.getPath('userData'));
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
-let mainWindow: Electron.BrowserWindow|null;
+let mainWindow: Electron.BrowserWindow | null;
 let tray: Tray;
 
 let isAppQuitting = false;
@@ -50,35 +63,44 @@ let localizedStrings: {[key: string]: string} = {
   'tray-open-window': 'Open',
   'connected-server-state': 'Connected',
   'disconnected-server-state': 'Disconnected',
-  'quit': 'Quit'
+  quit: 'Quit',
 };
-
-const debugMode = process.env.OUTLINE_DEBUG === 'true';
-
-// Build-time constant defined by webpack and set to the value of $NETWORK_STACK,
-// or 'libevbadvpn' by default.
-declare const NETWORK_STACK: string;
 
 const TRAY_ICON_IMAGES = {
   connected: createTrayIconImage('connected.png'),
-  disconnected: createTrayIconImage('disconnected.png')
+  disconnected: createTrayIconImage('disconnected.png'),
 };
 
 const enum Options {
-  AUTOSTART = '--autostart'
+  AUTOSTART = '--autostart',
 }
 
 const REACHABILITY_TIMEOUT_MS = 10000;
 
-let currentTunnel: VpnTunnel|undefined;
+let currentTunnel: VpnTunnel | undefined;
+
+/**
+ * Sentry must be initialized before electron app is ready:
+ *   - https://github.com/getsentry/sentry-electron/blob/3.0.7/src/main/ipc.ts#L70
+ */
+function setupSentry(): void {
+  // Use 'typeof(v)' instead of '!!v' here to prevent ReferenceError
+  if (typeof SENTRY_DSN !== 'undefined' && typeof APP_VERSION !== 'undefined') {
+    // This config makes console (log/info/warn/error - no debug!) output go to breadcrumbs.
+    sentry.init({dsn: SENTRY_DSN, release: APP_VERSION, maxBreadcrumbs: 100});
+  }
+}
 
 function setupMenu(): void {
   if (debugMode) {
-    Menu.setApplicationMenu(Menu.buildFromTemplate([{
-      label: 'Developer',
-      submenu: Menu.buildFromTemplate(
-          [{role: 'reload'}, {role: 'forceReload'}, {role: 'toggleDevTools'}])
-    }]));
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        {
+          label: 'Developer',
+          submenu: Menu.buildFromTemplate([{role: 'reload'}, {role: 'forceReload'}, {role: 'toggleDevTools'}]),
+        },
+      ])
+    );
   } else {
     // Hide standard menu.
     Menu.setApplicationMenu(null);
@@ -97,8 +119,31 @@ function setupTray(): void {
 
 function setupWindow(): void {
   // Create the browser window.
-  mainWindow = new BrowserWindow(
-      {width: 360, height: 640, resizable: false, webPreferences: {nodeIntegration: true}});
+  mainWindow = new BrowserWindow({
+    width: 360,
+    height: 640,
+    resizable: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+
+  // Icon is not shown in Ubuntu Dock. It is a recurrent issue happened in Linux:
+  //   - https://github.com/electron-userland/electron-builder/issues/2269
+  // A workaround is to forcibly set the icon of the main window.
+  //
+  // This is a workaround because the icon is fixed to 64x64, which might look blurry
+  // on higher dpi (>= 200%) settings. Setting it to a higher resolution icon (e.g., 128x128)
+  // does not work either because Ubuntu's image resize algorithm is pretty bad, the icon
+  // looks too sharp in a regular dpi (100%) setting.
+  //
+  // The ideal solution would be: either electron-builder supports the app icon; or we add
+  // dpi-aware features to this app.
+  if (isLinux) {
+    mainWindow.setIcon(path.join(app.getAppPath(), 'build', 'icons', 'png', '64x64.png'));
+  }
 
   const pathToIndexHtml = path.join(app.getAppPath(), 'www', 'index_electron.html');
   const webAppUrl = new url.URL(`file://${pathToIndexHtml}`);
@@ -135,7 +180,8 @@ function setupWindow(): void {
 
   // TODO: is this the most appropriate event?
   mainWindow.webContents.on('did-finish-load', () => {
-    mainWindow.webContents.send('localizationRequest', Object.keys(localizedStrings));
+    // TODO: refactor channel name and namespace to a constant
+    mainWindow.webContents.send('outline-ipc-localization-request', Object.keys(localizedStrings));
     interceptShadowsocksLink(process.argv);
   });
 
@@ -143,7 +189,16 @@ function setupWindow(): void {
   // user clicked on one of the Privacy, Terms, etc., links. These should
   // open in the user's browser.
   mainWindow.webContents.on('will-navigate', (event: Event, url: string) => {
-    shell.openExternal(url);
+    try {
+      const parsed: URL = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url);
+      } else {
+        console.warn(`Refusing to open URL with protocol "${parsed.protocol}"`);
+      }
+    } catch (e) {
+      console.warn('Could not parse URL: ' + url);
+    }
     event.preventDefault();
   });
 }
@@ -152,24 +207,23 @@ function updateTray(status: TunnelStatus) {
   const isConnected = status === TunnelStatus.CONNECTED;
   tray.setImage(isConnected ? TRAY_ICON_IMAGES.connected : TRAY_ICON_IMAGES.disconnected);
   // Retrieve localized strings, falling back to the pre-populated English default.
-  const statusString = isConnected ? localizedStrings['connected-server-state'] :
-                                     localizedStrings['disconnected-server-state'];
+  const statusString = isConnected
+    ? localizedStrings['connected-server-state']
+    : localizedStrings['disconnected-server-state'];
   let menuTemplate = [
-    {label: statusString, enabled: false}, {type: 'separator'} as MenuItemConstructorOptions,
-    {label: localizedStrings['quit'], click: quitApp}
+    {label: statusString, enabled: false},
+    {type: 'separator'} as MenuItemConstructorOptions,
+    {label: localizedStrings['quit'], click: quitApp},
   ];
-  if (os.platform() === 'linux') {
+  if (isLinux) {
     // Because the click event is never fired on Linux, we need an explicit open option.
-    menuTemplate = [
-      {label: localizedStrings['tray-open-window'], click: () => mainWindow.show()}, ...menuTemplate
-    ];
+    menuTemplate = [{label: localizedStrings['tray-open-window'], click: () => mainWindow.show()}, ...menuTemplate];
   }
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
 }
 
 function createTrayIconImage(imageName: string) {
-  const image =
-      nativeImage.createFromPath(path.join(app.getAppPath(), 'resources', 'tray', imageName));
+  const image = nativeImage.createFromPath(path.join(app.getAppPath(), 'resources', 'tray', imageName));
   if (image.isEmpty()) {
     throw new Error(`cannot find ${imageName} tray icon image`);
   }
@@ -193,7 +247,8 @@ function interceptShadowsocksLink(argv: string[]) {
         // The system adds a trailing slash to the intercepted URL (before the fragment).
         // Remove it before sending to the UI.
         url = `${protocol}${url.substr(protocol.length).replace(/\//g, '')}`;
-        mainWindow.webContents.send('add-server', url);
+        // TODO: refactor channel name and namespace to a constant
+        mainWindow.webContents.send('outline-ipc-add-server', url);
       } else {
         console.error('called with URL but mainWindow not open');
       }
@@ -206,7 +261,7 @@ function interceptShadowsocksLink(argv: string[]) {
 async function setupAutoLaunch(args: SerializableTunnel): Promise<void> {
   try {
     await tunnelStore.save(args);
-    if (os.platform() === 'linux') {
+    if (isLinux) {
       if (process.env.APPIMAGE) {
         const outlineAutoLauncher = new autoLaunch({
           name: 'OutlineClient',
@@ -224,7 +279,7 @@ async function setupAutoLaunch(args: SerializableTunnel): Promise<void> {
 
 async function tearDownAutoLaunch() {
   try {
-    if (os.platform() === 'linux') {
+    if (isLinux) {
       const outlineAutoLauncher = new autoLaunch({
         name: 'OutlineClient',
       });
@@ -314,7 +369,8 @@ function setUiTunnelStatus(status: TunnelStatus, tunnelId: string) {
       console.error(`Cannot send unknown proxy status: ${status}`);
       return;
   }
-  const event = `proxy-${statusString}-${tunnelId}`;
+  // TODO: refactor channel name and namespace to a constant
+  const event = `outline-ipc-proxy-${statusString}-${tunnelId}`;
   if (mainWindow) {
     mainWindow.webContents.send(event);
   } else {
@@ -332,6 +388,8 @@ function checkForUpdates() {
 }
 
 function main() {
+  setupSentry();
+
   if (!app.requestSingleInstanceLock()) {
     console.log('another instance is running - exiting');
     app.quit();
@@ -343,6 +401,9 @@ function main() {
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
   app.on('ready', async () => {
+    // To clearly identify app restarts in Sentry.
+    console.info('Outline is starting');
+
     setupMenu();
     setupTray();
     // TODO(fortuna): Start the app with the window hidden on auto-start?
@@ -389,13 +450,14 @@ function main() {
 
   // This event fires whenever the app's window receives focus.
   app.on('browser-window-focus', () => {
-    mainWindow?.webContents.send('push-clipboard');
+    // TODO: refactor channel name and namespace to a constant
+    mainWindow?.webContents.send('outline-ipc-push-clipboard');
   });
 
-  promiseIpc.on('is-server-reachable', async (args: {hostname: string, port: number}) => {
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.handle('outline-ipc-is-server-reachable', async (_, args: {hostname: string; port: number}) => {
     try {
-      await connectivity.isServerReachable(
-          args.hostname || '', args.port || 0, REACHABILITY_TIMEOUT_MS);
+      await connectivity.isServerReachable(args.hostname || '', args.port || 0, REACHABILITY_TIMEOUT_MS);
       return true;
     } catch {
       return false;
@@ -403,65 +465,81 @@ function main() {
   });
 
   // Connects to the specified server, if that server is reachable and the credentials are valid.
-  promiseIpc.on('start-proxying', async (args: {config: ShadowsocksConfig, id: string}) => {
-    // TODO: Rather than first disconnecting, implement a more efficient switchover (as well as
-    //       being faster, this would help prevent traffic leaks - the Cordova clients already do
-    //       this).
-    if (currentTunnel) {
-      console.log('disconnecting from current server...');
-      currentTunnel.disconnect();
-      await currentTunnel.onceDisconnected;
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.handle(
+    'outline-ipc-start-proxying',
+    async (_, args: {config: ShadowsocksConfig; id: string}): Promise<errors.ErrorCode> => {
+      // TODO: Rather than first disconnecting, implement a more efficient switchover (as well as
+      //       being faster, this would help prevent traffic leaks - the Cordova clients already do
+      //       this).
+      if (currentTunnel) {
+        console.log('disconnecting from current server...');
+        currentTunnel.disconnect();
+        await currentTunnel.onceDisconnected;
+      }
+
+      console.log(`connecting to ${args.id}...`);
+
+      try {
+        // Rather than repeadedly resolving a hostname in what may be a fingerprint-able way,
+        // resolve it just once, upfront.
+        args.config.host = await connectivity.lookupIp(args.config.host || '');
+
+        await connectivity.isServerReachable(args.config.host || '', args.config.port || 0, REACHABILITY_TIMEOUT_MS);
+
+        await startVpn(args.config, args.id);
+        console.log(`connected to ${args.id}`);
+        await setupAutoLaunch(args);
+        // Auto-connect requires IPs; the hostname in here has already been resolved (see above).
+        tunnelStore.save(args).catch(() => {
+          console.error('Failed to store tunnel.');
+        });
+
+        return errors.ErrorCode.NO_ERROR;
+      } catch (e) {
+        console.error(`could not connect: ${e.name} (${e.message})`);
+        // clean up the state, no need to await because stopVpn might throw another error which can be ignored
+        stopVpn();
+        return errors.toErrorCode(e);
+      }
     }
-
-    console.log(`connecting to ${args.id}...`);
-
-    try {
-      // Rather than repeadedly resolving a hostname in what may be a fingerprint-able way,
-      // resolve it just once, upfront.
-      args.config.host = await connectivity.lookupIp(args.config.host || '');
-
-      await connectivity.isServerReachable(
-          args.config.host || '', args.config.port || 0, REACHABILITY_TIMEOUT_MS);
-
-      await startVpn(args.config, args.id);
-      console.log(`connected to ${args.id}`);
-      await setupAutoLaunch(args);
-      // Auto-connect requires IPs; the hostname in here has already been resolved (see above).
-      tunnelStore.save(args).catch((e) => {
-        console.error('Failed to store tunnel.');
-      });
-    } catch (e) {
-      console.error(`could not connect: ${e.name} (${e.message})`);
-      throw errors.toErrorCode(e);
-    }
-  });
+  );
 
   // Disconnects from the current server, if any.
-  promiseIpc.on('stop-proxying', stopVpn);
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.handle('outline-ipc-stop-proxying', stopVpn);
 
-  // Error reporting.
-  // This config makes console (log/info/warn/error - no debug!) output go to breadcrumbs.
-  ipcMain.on('environment-info', (event: Event, info: {appVersion: string, dsn: string}) => {
-    if (info.dsn) {
-      sentry.init({dsn: info.dsn, release: info.appVersion, maxBreadcrumbs: 100});
+  // Install backend services and return the error code
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.handle('outline-ipc-install-outline-services', async () => {
+    // catch custom errors (even simple as numbers) does not work for ipcRenderer:
+    // https://github.com/electron/electron/issues/24427
+    try {
+      await installRoutingServices();
+      return errors.ErrorCode.NO_ERROR;
+    } catch (e) {
+      if (typeof e === 'number') {
+        return e;
+      }
+      return errors.ErrorCode.UNEXPECTED;
     }
-    // To clearly identify app restarts in Sentry.
-    console.info(`Outline is starting`);
   });
 
-  ipcMain.on('quit-app', quitApp);
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.on('outline-ipc-quit-app', quitApp);
 
-  ipcMain.on(
-      'localizationResponse', (event: Event, localizationResult: {[key: string]: string}) => {
-        if (!!localizationResult) {
-          localizedStrings = localizationResult;
-        }
-        updateTray(TunnelStatus.DISCONNECTED);
-      });
+  // TODO: refactor channel name and namespace to a constant
+  ipcMain.on('outline-ipc-localization-response', (_, localizationResult: {[key: string]: string}) => {
+    if (localizationResult) {
+      localizedStrings = localizationResult;
+    }
+    updateTray(TunnelStatus.DISCONNECTED);
+  });
 
   // Notify the UI of updates.
-  autoUpdater.on('update-downloaded', (ev, info) => {
-    mainWindow?.webContents.send('update-downloaded');
+  autoUpdater.on('update-downloaded', () => {
+    // TODO: refactor channel name and namespace to a constant
+    mainWindow?.webContents.send('outline-ipc-update-downloaded');
   });
 }
 

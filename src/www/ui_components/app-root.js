@@ -36,7 +36,6 @@ import '@polymer/paper-item/paper-item.js';
 import '@polymer/paper-item/paper-icon-item.js';
 import '@polymer/paper-listbox/paper-listbox.js';
 import '@polymer/paper-toast/paper-toast.js';
-
 import 'outline-i18n/index.js';
 import './about-view.js';
 import './add-server-view.js';
@@ -45,10 +44,7 @@ import './language-view.js';
 import './licenses-view.js';
 import './outline-icons.js';
 import './privacy-view.js';
-import './server_list.ts';
-import './server_card.ts';
-import './server_connection_viz.ts';
-import './servers-view.js';
+import '../views/servers_view';
 import './server-rename-dialog.js';
 import './user-comms-dialog.js';
 
@@ -62,214 +58,247 @@ import {PolymerElement} from '@polymer/polymer/polymer-element.js';
 // https://github.com/PolymerElements/paper-menu-button/issues/101#issuecomment-297856912
 PaperMenuButton.prototype.properties.restoreFocusOnClose.value = false;
 
-export class AppRoot extends mixinBehaviors
-([AppLocalizeBehavior], PolymerElement) {
+export class AppRoot extends mixinBehaviors([AppLocalizeBehavior], PolymerElement) {
   static get template() {
     return html`
-    <style>
-      :host {
-        --app-toolbar-height: 40px;
-        --light-green: #2fbea5;
-        --medium-green: #009688;
-        --dark-green: #263238;
-        --light-gray: #ececec;
-        --paper-dialog-button-color: var(--medium-green);
-        --app-drawer-width: 280px;
-        display: flex;
-        flex-direction: column;
-      }
+      <style>
+        :host {
+          --app-toolbar-height: 40px;
+          --light-green: #2fbea5;
+          --medium-green: #009688;
+          --dark-green: #263238;
+          --light-gray: #ececec;
+          --paper-dialog-button-color: var(--medium-green);
+          --app-drawer-width: 280px;
+          display: flex;
+          flex-direction: column;
+          font-family: var(--outline-font-family);
+        }
 
-      app-header {
-        height: 56px;
-      }
+        app-header {
+          height: 56px;
+        }
 
-      app-toolbar {
-        height: var(--app-toolbar-height);
-        color: #fff;
-        padding: 8px;
-        background: var(--dark-green);
-        text-align: center;
-        display: flex;
-        justify-content: space-between;
-      }
+        app-toolbar {
+          height: var(--app-toolbar-height);
+          color: #fff;
+          padding: 8px;
+          background: var(--dark-green);
+          text-align: center;
+          display: flex;
+          justify-content: space-between;
+        }
 
-      app-toolbar [main-title] {
-        flex: 2 1 100%;
-      }
+        app-toolbar [main-title] {
+          flex: 2 1 100%;
+        }
 
-      app-toolbar img {
-        height: 19px;
-        margin-top: 2px;
-      }
+        app-toolbar img {
+          height: 19px;
+          margin-top: 2px;
+        }
 
-      app-toolbar paper-icon-button {
-        /* make the ink color (used for tap animations) actually visible */
-        --paper-icon-button-ink-color: #eff;
-      }
+        app-toolbar paper-icon-button {
+          /* make the ink color (used for tap animations) actually visible */
+          --paper-icon-button-ink-color: #eff;
+        }
 
-      #app-toolbar-left,
-      #app-toolbar-right {
-        flex: 1;
-        min-width: 40px;
-      }
+        #app-toolbar-left,
+        #app-toolbar-right {
+          flex: 1;
+          min-width: 40px;
+        }
 
-      iron-pages {
-        display: flex;
-        flex: 1;
-      }
+        iron-pages {
+          display: flex;
+          flex: 1;
+          background-color: #efefef;
+        }
 
-      #drawer-nav {
-        padding: 0;
-      }
+        #drawer-nav {
+          padding: 0;
+        }
 
-      #nav-scrollable-container {
-        height: 100%;
-        overflow-y: auto;
-      }
+        #nav-scrollable-container {
+          height: 100%;
+          overflow-y: auto;
+        }
 
-      /* rtl:begin:ignore */
-      #drawer-nav paper-icon-item {
-        cursor: pointer;
-        font-size: 16px;
-        --paper-item-selected: {
+        /* rtl:begin:ignore */
+        #drawer-nav paper-icon-item {
+          cursor: pointer;
+          font-size: 16px;
+          --paper-item-selected: {
+            color: var(--medium-green);
+            background-color: var(--light-gray);
+            font-weight: normal;
+          }
+        }
+
+        #drawer-nav paper-icon-item:focus::before,
+        #drawer-nav paper-icon-item:focus::after {
           color: var(--medium-green);
           background-color: var(--light-gray);
-          font-weight: normal;
         }
-      }
+        /* rtl:end:ignore */
 
-      #drawer-nav paper-icon-item:focus::before,
-      #drawer-nav paper-icon-item:focus::after {
-        color: var(--medium-green);
-        background-color: var(--light-gray);
-      }
-      /* rtl:end:ignore */
-
-      /* Manually reverse icons that require mirroring in RTL languages. */
-      :host(:dir(rtl)) #feedback-icon,
-      :host(:dir(rtl)) #backBtn {
-        transform: scaleX(-1);
-      }
-
-      #logo-nav {
-        background-color: var(--dark-green);
-        text-align: center;
-        height: 120px;
-      }
-
-      #logo {
-        width: 60px;
-        height: 60px;
-        margin-top: 30px;
-      }
-
-      .nav-hr {
-        background-color: #e0e0e0;
-        height: 1px;
-        margin: 0;
-        border-width: 0px;
-      }
-
-      #drawer-nav paper-icon-item .item-label {
-        float: left;
-      }
-
-      #drawer-nav paper-icon-item:not(.iron-selected) {
-        opacity: 0.8;
-      }
-
-      #drawer-nav paper-item {
-        min-height: 32px;
-      }
-
-      .last-menu-item {
-        margin-bottom: 12px;
-      }
-
-      .border-top {
-        border-top: 1px solid #e0e0e0;
-        padding-top: 12px;
-      }
-
-      paper-item > :first-child {
-        color: rgba(0, 0, 0, 0.54);
-        font-size: 14px;
-        text-decoration: none;
-        width: 100%;
-        cursor: pointer;
-      }
-
-      paper-toast {
-        --paper-toast-background-color: var(--dark-green);
-        align-items: center;
-        display: flex;
-        flex-direction: row;
-        justify-content: space-between;
-      }
-
-      paper-toast paper-button {
-        color: var(--light-green);
-        text-align: center;
-        /* Prevent the button getting too close to the toast's text. */
-        margin-left: 12px;
-      }
-
-      @media (max-height: 480px) {
-        :host {
-          --app-drawer-width: 250px;
+        /* Manually reverse icons that require mirroring in RTL languages. */
+        :host(:dir(rtl)) #feedback-icon,
+        :host(:dir(rtl)) #backBtn {
+          transform: scaleX(-1);
         }
-        #drawer-nav paper-icon-item {
-          min-height: 42px;
-        }
-      }
-      @media (min-height: 600px) {
+
         #logo-nav {
-          height: 180px;
+          background-color: var(--dark-green);
+          text-align: center;
+          height: 120px;
         }
+
         #logo {
-          width: 68px;
-          height: 68px;
-          margin-top: 56px;
+          width: 60px;
+          height: 60px;
+          margin-top: 30px;
         }
+
+        .nav-hr {
+          background-color: #e0e0e0;
+          height: 1px;
+          margin: 0;
+          border-width: 0px;
+        }
+
+        #drawer-nav paper-icon-item .item-label {
+          float: left;
+        }
+
+        #drawer-nav paper-icon-item:not(.iron-selected) {
+          opacity: 0.8;
+        }
+
         #drawer-nav paper-item {
-          min-height: 48px;
+          min-height: 32px;
         }
-      }
-    </style>
-    <app-location route="{{route}}" url-space-regex="^/index.html" use-hash-as-path=""></app-location>
-    <app-route route="{{route}}" pattern="/:page" data="{{routeData}}"></app-route>
 
-    <privacy-view id="privacyView" root-path="[[rootPath]]" localize="[[localize]]" hidden=""></privacy-view>
+        .last-menu-item {
+          margin-bottom: 12px;
+        }
 
-    <app-header-layout fullbleed="">
-      <app-header slot="header" fixed="">
-        <app-toolbar>
-          <div id="app-toolbar-left">
-            <paper-icon-button id="menuBtn" hidden\$="[[shouldShowBackButton]]" icon="menu" on-tap="openDrawer"></paper-icon-button>
-            <paper-icon-button id="backBtn" hidden\$="[[!shouldShowBackButton]]" icon="arrow-back" on-tap="_goBack"></paper-icon-button>
-          </div>
-          <div main-title="" class\$="[[page]]">
-            <img src\$="[[rootPath]]assets/outline-client-logo.svg" hidden\$="[[!shouldShowAppLogo]]">
-            <div hidden\$="[[shouldShowAppLogo]]">[[localize(pageTitleKey)]]</div>
-          </div>
-          <div id="app-toolbar-right">
-            <paper-icon-button id="addBtn" icon="add" on-tap="promptAddServer" hidden\$="[[!shouldShowAddButton]]"></paper-icon-button>
-          </div>
-        </app-toolbar>
-      </app-header>
+        .border-top {
+          border-top: 1px solid #e0e0e0;
+          padding-top: 12px;
+        }
 
-      <iron-pages id="pages" selected="[[page]]" attr-for-selected="name">
-        <servers-view name="servers" id="serversView" servers="[[servers]]" root-path="[[rootPath]]" localize="[[localize]]"></servers-view>
-        <feedback-view name="feedback" id="feedbackView" localize="[[localize]]"></feedback-view>
-        <about-view name="about" id="aboutView" localize="[[localize]]" root-path="[[rootPath]]" version="[[appVersion]]"></about-view>
-        <language-view name="language" id="aboutView" selected-language="[[language]]" languages="[[_getLanguagesAvailableValues(LANGUAGES_AVAILABLE)]]"></language-view>
-        <!-- Do not mirror licenses text, as it is not localized. -->
-        <licenses-view name="licenses" id="licensesView" dir="ltr" localize="[[localize]]" root-path="[[rootPath]]"></licenses-view>
-      </iron-pages>
-    </app-header-layout>
+        paper-item > :first-child {
+          color: rgba(0, 0, 0, 0.54);
+          font-size: 14px;
+          text-decoration: none;
+          width: 100%;
+          cursor: pointer;
+        }
 
-    <app-drawer slot="drawer" id="drawer" swipe-open="" transition-duration="350">
-      <!--
+        paper-toast {
+          --paper-toast-background-color: var(--dark-green);
+          align-items: center;
+          display: flex;
+          flex-direction: row;
+          justify-content: space-between;
+        }
+
+        paper-toast paper-button {
+          color: var(--light-green);
+          text-align: center;
+          /* Prevent the button getting too close to the toast's text. */
+          margin-left: 12px;
+        }
+
+        @media (max-height: 480px) {
+          :host {
+            --app-drawer-width: 250px;
+          }
+          #drawer-nav paper-icon-item {
+            min-height: 42px;
+          }
+        }
+        @media (min-height: 650px) {
+          #logo-nav {
+            height: 180px;
+          }
+          #logo {
+            width: 68px;
+            height: 68px;
+            margin-top: 56px;
+          }
+          #drawer-nav paper-item {
+            min-height: 48px;
+          }
+        }
+      </style>
+      <app-location route="{{route}}" url-space-regex="^/index.html" use-hash-as-path=""></app-location>
+      <app-route route="{{route}}" pattern="/:page" data="{{routeData}}"></app-route>
+
+      <privacy-view id="privacyView" root-path="[[rootPath]]" localize="[[localize]]" hidden=""></privacy-view>
+
+      <app-header-layout fullbleed="">
+        <app-header slot="header" fixed="">
+          <app-toolbar>
+            <div id="app-toolbar-left">
+              <paper-icon-button
+                id="menuBtn"
+                hidden$="[[shouldShowBackButton]]"
+                icon="menu"
+                on-tap="openDrawer"
+              ></paper-icon-button>
+              <paper-icon-button
+                id="backBtn"
+                hidden$="[[!shouldShowBackButton]]"
+                icon="arrow-back"
+                on-tap="_goBack"
+              ></paper-icon-button>
+            </div>
+            <div main-title="" class$="[[page]]">
+              <img src$="[[rootPath]]assets/outline-client-logo.svg" hidden$="[[!shouldShowAppLogo]]" />
+              <div hidden$="[[shouldShowAppLogo]]">[[localize(pageTitleKey)]]</div>
+            </div>
+            <div id="app-toolbar-right">
+              <paper-icon-button
+                id="addBtn"
+                icon="add"
+                on-tap="promptAddServer"
+                hidden$="[[!shouldShowAddButton]]"
+              ></paper-icon-button>
+            </div>
+          </app-toolbar>
+        </app-header>
+
+        <iron-pages id="pages" selected="[[page]]" attr-for-selected="name">
+          <servers-view name="servers" id="serversView" servers="[[servers]]" localize="[[localize]]"></servers-view>
+          <feedback-view name="feedback" id="feedbackView" localize="[[localize]]"></feedback-view>
+          <about-view
+            name="about"
+            id="aboutView"
+            localize="[[localize]]"
+            root-path="[[rootPath]]"
+            version="[[appVersion]]"
+          ></about-view>
+          <language-view
+            name="language"
+            id="aboutView"
+            selected-language="[[language]]"
+            languages="[[_getLanguagesAvailableValues(LANGUAGES_AVAILABLE)]]"
+          ></language-view>
+          <!-- Do not mirror licenses text, as it is not localized. -->
+          <licenses-view
+            name="licenses"
+            id="licensesView"
+            dir="ltr"
+            localize="[[localize]]"
+            root-path="[[rootPath]]"
+          ></licenses-view>
+        </iron-pages>
+      </app-header-layout>
+
+      <app-drawer slot="drawer" id="drawer" swipe-open="" transition-duration="350">
+        <!--
         Notice that transition-duration="350"? That magic number is very sensitive!
 
         ************************** CHANGE. AT. YOUR. PERIL. **************************
@@ -298,71 +327,79 @@ export class AppRoot extends mixinBehaviors
         ensues.
 
         And in case you're wondering, simply calling event.stopPropagation() after we call
-        this.\$.drawer.close() in drawer-nav's on-tap listener does not fix this, if we leave
+        this.$.drawer.close() in drawer-nav's on-tap listener does not fix this, if we leave
         the transition duration set to the 200ms default.
 
         <poop-with-flies-dot-gif/>
       -->
 
-      <div id="nav-scrollable-container">
-        <div id="logo-nav">
-          <img src\$="[[rootPath]]assets/logo-nav.png" alt="logo" id="logo">
+        <div id="nav-scrollable-container">
+          <div id="logo-nav">
+            <img src$="[[rootPath]]assets/logo-nav.png" alt="logo" id="logo" />
+          </div>
+          <hr class="nav-hr" />
+          <paper-listbox id="drawer-nav" selected="{{routeData.page}}" attr-for-selected="name" on-tap="closeDrawer">
+            <paper-icon-item name="servers">
+              <iron-icon icon="outline-icons:outline" slot="item-icon"></iron-icon>
+              <span class="item-label">[[localize('servers-menu-item')]]</span>
+            </paper-icon-item>
+            <paper-icon-item name="feedback">
+              <iron-icon id="feedback-icon" icon="feedback" slot="item-icon"></iron-icon>
+              [[localize('feedback-page-title')]]
+            </paper-icon-item>
+            <paper-icon-item name="about">
+              <iron-icon icon="info" slot="item-icon"></iron-icon>
+              [[localize('about-page-title')]]
+            </paper-icon-item>
+            <paper-icon-item name="help">
+              <a href="https://s3.amazonaws.com/outline-vpn/index.html#/support" id="helpAnchor" hidden=""></a>
+              <iron-icon icon="help" slot="item-icon"></iron-icon>
+              [[localize('help-page-title')]]
+            </paper-icon-item>
+            <paper-icon-item name="language" class$="[[_computeIsLastVisibleMenuItem(shouldShowQuitButton)]]">
+              <iron-icon icon="language" slot="item-icon"></iron-icon>
+              [[localize('change-language-page-title')]]
+            </paper-icon-item>
+            <paper-icon-item name="quit" class="last-menu-item" hidden$="[[!shouldShowQuitButton]]">
+              <iron-icon icon="cancel" slot="item-icon"></iron-icon>
+              [[localize('quit')]]
+            </paper-icon-item>
+            <paper-item class="border-top">
+              <a href="https://www.google.com/policies/privacy/">[[localize('privacy')]]</a>
+            </paper-item>
+            <paper-item>
+              <a href="https://s3.amazonaws.com/outline-vpn/index.html#/en/support/dataCollection"
+                >[[localize('data-collection')]]</a
+              >
+            </paper-item>
+            <paper-item>
+              <a href="https://s3.amazonaws.com/outline-vpn/static_downloads/Outline-Terms-of-Service.html"
+                >[[localize('terms')]]</a
+              >
+            </paper-item>
+            <paper-item name="licenses">
+              <span>[[localize('licenses-page-title')]]</span>
+            </paper-item>
+          </paper-listbox>
         </div>
-        <hr class="nav-hr">
-        <paper-listbox id="drawer-nav" selected="{{routeData.page}}" attr-for-selected="name" on-tap="closeDrawer">
-          <paper-icon-item name="servers">
-            <iron-icon icon="outline-icons:outline" slot="item-icon"></iron-icon>
-            <span class="item-label">[[localize('servers-menu-item')]]</span>
-          </paper-icon-item>
-          <paper-icon-item name="feedback">
-            <iron-icon id="feedback-icon" icon="feedback" slot="item-icon"></iron-icon>
-            [[localize('feedback-page-title')]]
-          </paper-icon-item>
-          <paper-icon-item name="about">
-            <iron-icon icon="info" slot="item-icon"></iron-icon>
-            [[localize('about-page-title')]]
-          </paper-icon-item>
-          <paper-icon-item name="help">
-            <a href="https://s3.amazonaws.com/outline-vpn/index.html#/support" id="helpAnchor" hidden=""></a>
-            <iron-icon icon="help" slot="item-icon"></iron-icon>
-            [[localize('help-page-title')]]
-          </paper-icon-item>
-          <paper-icon-item name="language" class\$="[[_computeIsLastVisibleMenuItem(shouldShowQuitButton)]]">
-            <iron-icon icon="language" slot="item-icon"></iron-icon>
-            [[localize('change-language-page-title')]]
-          </paper-icon-item>
-          <paper-icon-item name="quit" class="last-menu-item" hidden\$="[[!shouldShowQuitButton]]">
-            <iron-icon icon="cancel" slot="item-icon"></iron-icon>
-            [[localize('quit')]]
-          </paper-icon-item>
-          <paper-item class="border-top">
-            <a href="https://www.google.com/policies/privacy/">[[localize('privacy')]]</a>
-          </paper-item>
-          <paper-item>
-            <a href="https://s3.amazonaws.com/outline-vpn/index.html#/en/support/dataCollection">[[localize('data-collection')]]</a>
-          </paper-item>
-          <paper-item>
-            <a href="https://s3.amazonaws.com/outline-vpn/static_downloads/Outline-Terms-of-Service.html">[[localize('terms')]]</a>
-          </paper-item>
-          <paper-item name="licenses">
-            <span>[[localize('licenses-page-title')]]</span>
-          </paper-item>
-        </paper-listbox>
-      </div>
-    </app-drawer>
+      </app-drawer>
 
-    <paper-toast id="toast" class="fit-bottom" no-cancel-on-esc-key="">
-      <paper-button id="toastButton" on-tap="_callToastHandler"></paper-button>
-      <a hidden="" id="toastUrl" href="[[toastUrl]]"></a>
-    </paper-toast>
+      <paper-toast id="toast" class="fit-bottom" no-cancel-on-esc-key="">
+        <paper-button id="toastButton" on-tap="_callToastHandler"></paper-button>
+        <a hidden="" id="toastUrl" href="[[toastUrl]]"></a>
+      </paper-toast>
 
-    <add-server-view id="addServerView" localize="[[localize]]"></add-server-view>
+      <add-server-view id="addServerView" localize="[[localize]]"></add-server-view>
 
-    <!-- Modal dialogs must be placed outside of app-header-layout, see
+      <!-- Modal dialogs must be placed outside of app-header-layout, see
     https://github.com/PolymerElements/paper-dialog/issues/152 and
     https://github.com/PolymerElements/app-layout/issues/295
     Once those are fixed we can consider moving this into server-card.html -->
-    <server-rename-dialog id="serverRenameDialog" root-path="[[rootPath]]" localize="[[localize]]"></server-rename-dialog>
+      <server-rename-dialog
+        id="serverRenameDialog"
+        root-path="[[rootPath]]"
+        localize="[[localize]]"
+      ></server-rename-dialog>
     `;
   }
 
@@ -388,50 +425,59 @@ export class AppRoot extends mixinBehaviors
         value: {
           am: {id: 'am', name: 'አማርኛ', dir: 'ltr'},
           ar: {id: 'ar', name: 'العربية', dir: 'rtl'},
-          az: {id: 'az', name: 'Azərbaycanca', dir: 'ltr'},
-          bg: {id: 'bg', name: 'Български', dir: 'ltr'},
-          ca: {id: 'ca', name: 'Català', dir: 'ltr'},
-          cs: {id: 'cs', name: 'Česky', dir: 'ltr'},
+          az: {id: 'az', name: 'azərbaycan', dir: 'ltr'},
+          bg: {id: 'bg', name: 'български', dir: 'ltr'},
+          bs: {id: 'bs', name: 'bosanski', dir: 'ltr'},
+          ca: {id: 'ca', name: 'català', dir: 'ltr'},
+          cs: {id: 'cs', name: 'Čeština', dir: 'ltr'},
           da: {id: 'da', name: 'Dansk', dir: 'ltr'},
           de: {id: 'de', name: 'Deutsch', dir: 'ltr'},
           el: {id: 'el', name: 'Ελληνικά', dir: 'ltr'},
           en: {id: 'en', name: 'English', dir: 'ltr'},
-          'es-419': {id: 'es-419', name: 'Español', dir: 'ltr'},
+          'en-GB': {id: 'en-GB', name: 'English (United Kingdom)', dir: 'ltr'},
+          es: {id: 'es', name: 'Español', dir: 'ltr'},
+          'es-419': {id: 'es-419', name: 'Español (Latinoamérica)', dir: 'ltr'},
+          et: {id: 'et', name: 'eesti', dir: 'ltr'},
           fa: {id: 'fa', name: 'فارسی', dir: 'rtl'},
           fi: {id: 'fi', name: 'Suomi', dir: 'ltr'},
-          fil: {id: 'fil', name: 'Wikang Filipino', dir: 'ltr'},
+          fil: {id: 'fil', name: 'Filipino', dir: 'ltr'},
           fr: {id: 'fr', name: 'Français', dir: 'ltr'},
           he: {id: 'he', name: 'עברית', dir: 'rtl'},
           hi: {id: 'hi', name: 'हिन्दी', dir: 'ltr'},
           hr: {id: 'hr', name: 'Hrvatski', dir: 'ltr'},
-          hu: {id: 'hu', name: 'Magyar', dir: 'ltr'},
-          id: {id: 'id', name: 'Bahasa Indonesia', dir: 'ltr'},
+          hu: {id: 'hu', name: 'magyar', dir: 'ltr'},
+          hy: {id: 'hy', name: 'հայերեն', dir: 'ltr'},
+          id: {id: 'id', name: 'Indonesia', dir: 'ltr'},
           it: {id: 'it', name: 'Italiano', dir: 'ltr'},
           ja: {id: 'ja', name: '日本語', dir: 'ltr'},
-          kk: {id: 'kk', name: 'Қазақ тілі', dir: 'ltr'},
-          km: {id: 'km', name: 'ភាសាខ្មែរ', dir: 'ltr'},
+          ka: {id: 'ka', name: 'ქართული', dir: 'ltr'},
+          kk: {id: 'kk', name: 'қазақ тілі', dir: 'ltr'},
+          km: {id: 'km', name: 'ខ្មែរ', dir: 'ltr'},
           ko: {id: 'ko', name: '한국어', dir: 'ltr'},
-          lt: {id: 'lt', name: 'Lietuvių', dir: 'ltr'},
-          lv: {id: 'lv', name: 'Latviešu', dir: 'ltr'},
-          my: {id: 'my', name: 'မြန်မာစာ', dir: 'ltr'},
+          lt: {id: 'lt', name: 'lietuvių', dir: 'ltr'},
+          lv: {id: 'lv', name: 'latviešu', dir: 'ltr'},
+          mk: {id: 'mk', name: 'македонски', dir: 'ltr'},
+          my: {id: 'my', name: 'မြန်မာ', dir: 'ltr'},
           nl: {id: 'nl', name: 'Nederlands', dir: 'ltr'},
-          no: {id: 'no', name: 'Norsk (bokmål / riksmål)', dir: 'ltr'},
-          pl: {id: 'pl', name: 'Polski', dir: 'ltr'},
-          'pt-BR': {id: 'pt-BR', name: 'Português', dir: 'ltr'},
-          ro: {id: 'ro', name: 'Română', dir: 'ltr'},
+          no: {id: 'no', name: 'norsk', dir: 'ltr'},
+          pl: {id: 'pl', name: 'polski', dir: 'ltr'},
+          'pt-BR': {id: 'pt-BR', name: 'Português (Brasil)', dir: 'ltr'},
+          'pt-PT': {id: 'pt-PT', name: 'Português (Portugal)', dir: 'ltr'},
+          ro: {id: 'ro', name: 'română', dir: 'ltr'},
           ru: {id: 'ru', name: 'Русский', dir: 'ltr'},
           sk: {id: 'sk', name: 'Slovenčina', dir: 'ltr'},
-          sl: {id: 'sl', name: 'Slovenščina', dir: 'ltr'},
-          sr: {id: 'sr', name: 'Српски', dir: 'ltr'},
-          'sr-Latn': {id: 'sr-Latn', name: 'Srpski', dir: 'ltr'},
+          sl: {id: 'sl', name: 'slovenščina', dir: 'ltr'},
+          sq: {id: 'sq', name: 'shqip', dir: 'ltr'},
+          sr: {id: 'sr', name: 'српски', dir: 'ltr'},
+          'sr-Latn': {id: 'sr-Latn', name: 'srpski (latinica)', dir: 'ltr'},
           sv: {id: 'sv', name: 'Svenska', dir: 'ltr'},
           th: {id: 'th', name: 'ไทย', dir: 'ltr'},
           tr: {id: 'tr', name: 'Türkçe', dir: 'ltr'},
           uk: {id: 'uk', name: 'Українська', dir: 'ltr'},
           ur: {id: 'ur', name: 'اردو', dir: 'rtl'},
-          vi: {id: 'vi', name: 'Việtnam', dir: 'ltr'},
+          vi: {id: 'vi', name: 'Tiếng Việt', dir: 'ltr'},
           'zh-CN': {id: 'zh-CN', name: '简体中文', dir: 'ltr'},
-          'zh-TW': {id: 'zh-TW', name: '繁體中文‬‬‪‬', dir: 'ltr'},
+          'zh-TW': {id: 'zh-TW', name: '繁體中文', dir: 'ltr'},
         },
       },
       language: {
@@ -517,7 +563,7 @@ export class AppRoot extends mixinBehaviors
       // https://developer.mozilla.org/en-US/docs/Web/API/Event/composedPath#browser_compatibility
       Event.prototype.composedPath = function() {
         if (this.path) {
-          return this.path;  // ShadowDOM v0 equivalent property.
+          return this.path; // ShadowDOM v0 equivalent property.
         }
         var composedPath = [];
         var target = this.target;
@@ -538,8 +584,13 @@ export class AppRoot extends mixinBehaviors
       };
     }
 
-    // If cordova is not defined, we're running in Electron.
-    this.platform = cordova?.platformId ?? 'Electron';
+    if (typeof cordova === 'undefined') {
+      // If cordova is not defined, we're running in Electron.
+      this.platform = 'Electron';
+    } else {
+      // Don't use cordova?.platformId, ReferenceError will be thrown
+      this.platform = cordova.platformId;
+    }
   }
 
   setLanguage(languageCode) {
@@ -627,8 +678,7 @@ export class AppRoot extends mixinBehaviors
 
   _computeLanguage(availableLanguages, defaultLanguage) {
     const overrideLanguage = window.localStorage.getItem('overrideLanguage');
-    const bestMatchingLanguage =
-        OutlineI18n.getBestMatchingLanguage(Object.keys(availableLanguages));
+    const bestMatchingLanguage = OutlineI18n.getBestMatchingLanguage(Object.keys(availableLanguages));
     return overrideLanguage || bestMatchingLanguage || defaultLanguage;
   }
 
@@ -636,7 +686,7 @@ export class AppRoot extends mixinBehaviors
     if (this.page && pageFromRoute === this.page) {
       return this.page;
     } else if (pageFromRoute === 'help') {
-      this._openHelpPage();  // Fall-through to navigate to the default page.
+      this._openHelpPage(); // Fall-through to navigate to the default page.
     } else if (pageFromRoute === 'quit') {
       this.fire('QuitPressed');
     } else if (pageFromRoute) {
@@ -704,7 +754,7 @@ export class AppRoot extends mixinBehaviors
   }
 
   showServerRename(event) {
-    this.$.serverRenameDialog.open(event.detail.serverName, event.detail.serverId);
+    this.$.serverRenameDialog.open(event.detail.name, event.detail.serverId);
   }
 
   _computeShouldShowAppLogo(page) {

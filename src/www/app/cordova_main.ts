@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// <reference types='cordova'/>
-/// <reference path='../../types/ambient/webintents.d.ts'/>
+/// <reference path='../types/webintents.d.ts'/>
 
 import '@babel/polyfill';
 import 'web-animations-js/web-animations-next-lite.min.js';
@@ -37,9 +37,9 @@ import {AbstractUpdater} from './updater';
 import * as interceptors from './url_interceptor';
 import {FakeOutlineTunnel} from './fake_tunnel';
 import {ShadowsocksConfig} from './config';
+import {NoOpVpnInstaller, VpnInstaller} from './vpn_installer';
 
 const OUTLINE_PLUGIN_NAME = 'OutlinePlugin';
-
 
 // Pushes a clipboard event whenever the app is brought to the foreground.
 class CordovaClipboard extends AbstractClipboard {
@@ -156,23 +156,33 @@ class CordovaPlatform implements OutlinePlatform {
   }
 
   getErrorReporter(env: EnvironmentVariables) {
-    return this.hasDeviceSupport() ?
-        new CordovaErrorReporter(env.APP_VERSION, env.APP_BUILD_NUMBER, env.SENTRY_DSN || '') :
-        new SentryErrorReporter(env.APP_VERSION, env.SENTRY_DSN || '', {});
+    return this.hasDeviceSupport()
+      ? new CordovaErrorReporter(env.APP_VERSION, env.APP_BUILD_NUMBER, env.SENTRY_DSN || '')
+      : new SentryErrorReporter(env.APP_VERSION, env.SENTRY_DSN || '', {});
   }
 
   getUpdater() {
     return new AbstractUpdater();
   }
 
+  getVpnServiceInstaller(): VpnInstaller {
+    return new NoOpVpnInstaller();
+  }
+
   quitApplication() {
     // Only used in macOS because menu bar apps provide no alternative way of quitting.
-    cordova.exec(() => {}, () => {}, OUTLINE_PLUGIN_NAME, 'quitApplication', []);
+    cordova.exec(
+      () => {},
+      () => {},
+      OUTLINE_PLUGIN_NAME,
+      'quitApplication',
+      []
+    );
   }
 }
 
 // https://cordova.apache.org/docs/en/latest/cordova/events/events.html#deviceready
-const onceDeviceReady = new Promise((resolve) => {
+const onceDeviceReady = new Promise(resolve => {
   document.addEventListener('deviceready', resolve);
 });
 

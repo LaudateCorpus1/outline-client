@@ -14,12 +14,8 @@
 
 import {execSync} from 'child_process';
 import * as dgram from 'dgram';
-import * as dns from 'dns';
 import {powerMonitor} from 'electron';
-import * as net from 'net';
 import {platform} from 'os';
-import * as path from 'path';
-import * as process from 'process';
 import * as socks from 'socks';
 
 import {ShadowsocksConfig} from '../www/app/config';
@@ -29,7 +25,7 @@ import * as errors from '../www/model/errors';
 import {isServerReachable} from './connectivity';
 import {ChildProcessHelper} from './process';
 import {RoutingDaemon} from './routing_service';
-import {pathToEmbeddedBinary} from './util';
+import {pathToEmbeddedBinary} from '../infrastructure/electron/app_paths';
 import {VpnTunnel} from './vpn_tunnel';
 
 const isLinux = platform() === 'linux';
@@ -49,7 +45,6 @@ const SSLOCAL_PROXY_PORT = 1081;
 const SSLOCAL_RETRY_INTERVAL_MS = 100;
 
 const CREDENTIALS_TEST_DOMAINS = ['example.com', 'ietf.org', 'wikipedia.org'];
-const DNS_LOOKUP_TIMEOUT_MS = 10000;
 
 const UDP_FORWARDING_TEST_TIMEOUT_MS = 5000;
 const UDP_FORWARDING_TEST_RETRY_INTERVAL_MS = 1000;
@@ -80,7 +75,9 @@ function testTapDevice(tapDeviceName: string, tapDeviceIp: string) {
   //
   // popd
   // # End of IPv4 configuration
-  const lines = execSync(`netsh interface ipv4 dump`).toString().split('\n');
+  const lines = execSync(`netsh interface ipv4 dump`)
+    .toString()
+    .split('\n');
 
   // Find lines containing the TAP device name.
   const tapLines = lines.filter(s => s.indexOf(tapDeviceName) !== -1);
@@ -96,8 +93,12 @@ function testTapDevice(tapDeviceName: string, tapDeviceIp: string) {
 
 async function isSsLocalReachable() {
   await isServerReachable(
-      SSLOCAL_PROXY_HOST, SSLOCAL_PROXY_PORT, SSLOCAL_CONNECTION_TIMEOUT, SSLOCAL_MAX_ATTEMPTS,
-      SSLOCAL_RETRY_INTERVAL_MS);
+    SSLOCAL_PROXY_HOST,
+    SSLOCAL_PROXY_PORT,
+    SSLOCAL_CONNECTION_TIMEOUT,
+    SSLOCAL_MAX_ATTEMPTS,
+    SSLOCAL_RETRY_INTERVAL_MS
+  );
 }
 
 // Establishes a full-system VPN with the help of Outline's routing daemon and child processes
@@ -140,12 +141,12 @@ export class ShadowsocksLibevBadvpnTunnel implements VpnTunnel {
     // lifecycle:
     //  - once any helper fails or exits, stop them all
     //  - once *all* helpers have stopped, we're done
-    const ssLocalExit = new Promise<void>((resolve) => {
-      this.ssLocal.onExit = (code?: number, signal?: string) => {
+    const ssLocalExit = new Promise<void>(resolve => {
+      this.ssLocal.onExit = () => {
         resolve();
       };
     });
-    const tun2socksExit = new Promise<void>((resolve) => {
+    const tun2socksExit = new Promise<void>(resolve => {
       this.tun2socksExitListener = resolve;
       this.tun2socks.onExit = this.tun2socksExitListener;
     });
@@ -177,7 +178,7 @@ export class ShadowsocksLibevBadvpnTunnel implements VpnTunnel {
       // Windows: when the system suspends, tun2socks terminates due to the TAP device getting
       // closed.
       powerMonitor.on('suspend', this.suspendListener.bind(this));
-      powerMonitor.on('resume', this.resumeListener.bind((this)));
+      powerMonitor.on('resume', this.resumeListener.bind(this));
     }
 
     // ss-local must be up in order to test UDP support and validate credentials.
@@ -265,6 +266,8 @@ export class ShadowsocksLibevBadvpnTunnel implements VpnTunnel {
 
   // Use #onceDisconnected to be notified when the tunnel terminates.
   async disconnect() {
+    console.info('disconnecting from libev badvpn tunnel...');
+
     powerMonitor.removeListener('suspend', this.suspendListener.bind(this));
     powerMonitor.removeListener('resume', this.resumeListener.bind(this));
 
@@ -277,6 +280,7 @@ export class ShadowsocksLibevBadvpnTunnel implements VpnTunnel {
 
     try {
       await this.routing.stop();
+      console.info('disconnected from libev badvpn tunnel');
     } catch (e) {
       // This can happen for several reasons, e.g. the daemon may have stopped while we were
       // connected.
@@ -293,12 +297,12 @@ export class ShadowsocksLibevBadvpnTunnel implements VpnTunnel {
   }
 
   // Sets an optional callback for when the routing daemon is attempting to re-connect.
-  onReconnecting(newListener: () => void|undefined) {
+  onReconnecting(newListener: () => void | undefined) {
     this.reconnectingListener = newListener;
   }
 
   // Sets an optional callback for when the routing daemon successfully reconnects.
-  onReconnected(newListener: () => void|undefined) {
+  onReconnected(newListener: () => void | undefined) {
     this.reconnectedListener = newListener;
   }
 }
@@ -338,10 +342,11 @@ class BadvpnTun2socks extends ChildProcessHelper {
     //   --transparent-dns
     const args: string[] = [];
     args.push(
-        '--tundev',
-        isLinux ? TUN2SOCKS_TAP_DEVICE_NAME :
-                  `tap0901:${TUN2SOCKS_TAP_DEVICE_NAME}:${TUN2SOCKS_TAP_DEVICE_IP}:${
-                      TUN2SOCKS_TAP_DEVICE_NETWORK}:${TUN2SOCKS_VIRTUAL_ROUTER_NETMASK}`);
+      '--tundev',
+      isLinux
+        ? TUN2SOCKS_TAP_DEVICE_NAME
+        : `tap0901:${TUN2SOCKS_TAP_DEVICE_NAME}:${TUN2SOCKS_TAP_DEVICE_IP}:${TUN2SOCKS_TAP_DEVICE_NETWORK}:${TUN2SOCKS_VIRTUAL_ROUTER_NETMASK}`
+    );
     args.push('--netif-ipaddr', TUN2SOCKS_VIRTUAL_ROUTER_IP);
     args.push('--netif-netmask', TUN2SOCKS_VIRTUAL_ROUTER_NETMASK);
     args.push('--socks-server-addr', `${this.proxyAddress}:${this.proxyPort}`);
@@ -363,112 +368,128 @@ class BadvpnTun2socks extends ChildProcessHelper {
 // cordova-plugin-outline.
 function validateServerCredentials(proxyAddress: string, proxyIp: number) {
   return new Promise<void>((fulfill, reject) => {
-    const testDomain =
-        CREDENTIALS_TEST_DOMAINS[Math.floor(Math.random() * CREDENTIALS_TEST_DOMAINS.length)];
+    const testDomain = CREDENTIALS_TEST_DOMAINS[Math.floor(Math.random() * CREDENTIALS_TEST_DOMAINS.length)];
     socks.createConnection(
-        {
-          proxy: {ipaddress: proxyAddress, port: proxyIp, type: 5},
-          target: {host: testDomain, port: 80}
-        },
-        (e, socket) => {
-          if (e) {
-            reject(new errors.InvalidServerCredentials(
-                `could not connect to remote test website: ${e.message}`));
-            return;
+      {
+        proxy: {ipaddress: proxyAddress, port: proxyIp, type: 5},
+        target: {host: testDomain, port: 80},
+      },
+      (e, socket) => {
+        if (e) {
+          reject(new errors.InvalidServerCredentials(`could not connect to remote test website: ${e.message}`));
+          return;
+        }
+
+        socket.write(`HEAD / HTTP/1.1\r\nHost: ${testDomain}\r\n\r\n`);
+
+        socket.on('data', data => {
+          if (data.toString().startsWith('HTTP/1.1')) {
+            socket.end();
+            fulfill();
+          } else {
+            socket.end();
+            reject(new errors.InvalidServerCredentials(`unexpected response from remote test website`));
           }
-
-          socket.write(`HEAD / HTTP/1.1\r\nHost: ${testDomain}\r\n\r\n`);
-
-          socket.on('data', (data) => {
-            if (data.toString().startsWith('HTTP/1.1')) {
-              socket.end();
-              fulfill();
-            } else {
-              socket.end();
-              reject(new errors.InvalidServerCredentials(
-                  `unexpected response from remote test website`));
-            }
-          });
-
-          socket.on('close', () => {
-            reject(new errors.InvalidServerCredentials(`could not connect to remote test website`));
-          });
-
-          // Sockets must be resumed before any data will come in, as they are paused right before
-          // this callback is fired.
-          socket.resume();
         });
+
+        socket.on('close', () => {
+          reject(new errors.InvalidServerCredentials(`could not connect to remote test website`));
+        });
+
+        // Sockets must be resumed before any data will come in, as they are paused right before
+        // this callback is fired.
+        socket.resume();
+      }
+    );
   });
 }
 
 // DNS request to google.com.
 const DNS_REQUEST = Buffer.from([
-  0, 0,                             // [0-1]   query ID
-  1, 0,                             // [2-3]   flags; byte[2] = 1 for recursion desired (RD).
-  0, 1,                             // [4-5]   QDCOUNT (number of queries)
-  0, 0,                             // [6-7]   ANCOUNT (number of answers)
-  0, 0,                             // [8-9]   NSCOUNT (number of name server records)
-  0, 0,                             // [10-11] ARCOUNT (number of additional records)
-  6, 103, 111, 111, 103, 108, 101,  // google
-  3, 99,  111, 109,                 // com
-  0,                                // null terminator of FQDN (root TLD)
-  0, 1,                             // QTYPE, set to A
-  0, 1                              // QCLASS, set to 1 = IN (Internet)
+  0,
+  0, // [0-1]   query ID
+  1,
+  0, // [2-3]   flags; byte[2] = 1 for recursion desired (RD).
+  0,
+  1, // [4-5]   QDCOUNT (number of queries)
+  0,
+  0, // [6-7]   ANCOUNT (number of answers)
+  0,
+  0, // [8-9]   NSCOUNT (number of name server records)
+  0,
+  0, // [10-11] ARCOUNT (number of additional records)
+  6,
+  103,
+  111,
+  111,
+  103,
+  108,
+  101, // google
+  3,
+  99,
+  111,
+  109, // com
+  0, // null terminator of FQDN (root TLD)
+  0,
+  1, // QTYPE, set to A
+  0,
+  1, // QCLASS, set to 1 = IN (Internet)
 ]);
 
 // Verifies that the remote server has enabled UDP forwarding by sending a DNS request through it.
 function checkUdpForwardingEnabled(proxyAddress: string, proxyIp: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     socks.createConnection(
-        {
-          proxy: {ipaddress: proxyAddress, port: proxyIp, type: 5, command: 'associate'},
-          target: {host: '0.0.0.0', port: 0},  // Specify the actual target once we get a response.
-        },
-        (err, socket, info) => {
-          if (err) {
-            reject(new errors.RemoteUdpForwardingDisabled(`could not connect to local proxy`));
-            return;
-          }
-          const packet = socks.createUDPFrame({host: '1.1.1.1', port: 53}, DNS_REQUEST);
-          const udpSocket = dgram.createSocket('udp4');
+      {
+        proxy: {ipaddress: proxyAddress, port: proxyIp, type: 5, command: 'associate'},
+        target: {host: '0.0.0.0', port: 0}, // Specify the actual target once we get a response.
+      },
+      (err, socket, info) => {
+        if (err) {
+          reject(new errors.RemoteUdpForwardingDisabled(`could not connect to local proxy`));
+          return;
+        }
+        const packet = socks.createUDPFrame({host: '1.1.1.1', port: 53}, DNS_REQUEST);
+        const udpSocket = dgram.createSocket('udp4');
 
-          udpSocket.on('error', (e) => {
-            reject(new errors.RemoteUdpForwardingDisabled('UDP socket failure'));
-          });
-
-          udpSocket.on('message', (msg, info) => {
-            stopUdp();
-            resolve(true);
-          });
-
-          // Retry sending the query every second.
-          // TODO: logging here is a bit verbose
-          const intervalId = setInterval(() => {
-            try {
-              udpSocket.send(packet, info.port, info.host, (err) => {
-                if (err) {
-                  console.error(`Failed to send data through UDP: ${err}`);
-                }
-              });
-            } catch (e) {
-              console.error(`Failed to send data through UDP ${e}`);
-            }
-          }, UDP_FORWARDING_TEST_RETRY_INTERVAL_MS);
-
-          const stopUdp = () => {
-            try {
-              clearInterval(intervalId);
-              udpSocket.close();
-            } catch (e) {
-              // Ignore; there may be multiple calls to this function.
-            }
-          };
-
-          // Give up after the timeout elapses.
-          setTimeout(() => {
-            stopUdp();
-            resolve(false);
-          }, UDP_FORWARDING_TEST_TIMEOUT_MS);
+        udpSocket.on('error', () => {
+          reject(new errors.RemoteUdpForwardingDisabled('UDP socket failure'));
         });
+
+        udpSocket.on('message', () => {
+          stopUdp();
+          resolve(true);
+        });
+
+        // Retry sending the query every second.
+        // TODO: logging here is a bit verbose
+        const intervalId = setInterval(() => {
+          try {
+            udpSocket.send(packet, info.port, info.host, err => {
+              if (err) {
+                console.error(`Failed to send data through UDP: ${err}`);
+              }
+            });
+          } catch (e) {
+            console.error(`Failed to send data through UDP ${e}`);
+          }
+        }, UDP_FORWARDING_TEST_RETRY_INTERVAL_MS);
+
+        const stopUdp = () => {
+          try {
+            clearInterval(intervalId);
+            udpSocket.close();
+          } catch (e) {
+            // Ignore; there may be multiple calls to this function.
+          }
+        };
+
+        // Give up after the timeout elapses.
+        setTimeout(() => {
+          stopUdp();
+          resolve(false);
+        }, UDP_FORWARDING_TEST_TIMEOUT_MS);
+      }
+    );
   });
 }
